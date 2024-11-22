@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>XOR Neural Network</title>
+  </head>
+  <body>
+    <p class="copyright">
+      by Alexander L&ouml;hn - 2024 -
+      <a href="https://loehx.com/">loehx.com</a>
+    </p>
+    <script>
+      const ctx = {
+        neuronIndex: 0,
+        synapseIndex: 0,
+        delay: 100,
+        eventBus: useEventBus(),
+      };
+
+      usePageTitle("XOR Neural Network");
+
+      const nn = (window.nn = useNeuralNetwork());
+      console.log("Network", nn);
+
+      const visualization = useNetworkVisializer(nn);
+      const state = useStateController(nn);
+
+      ctx.eventBus.on("change", () => {
+        nn.refresh();
+        visualization.render();
+        state.save("current");
+      });
+
+      state.load("current", "XOR");
+      nn.refresh();
+      visualization.render();
+
+      function useNeuralNetwork({ inputSize = 2, outputSize = 1 } = {}) {
+        const layers = {
+          input: useNeuronLayer(inputSize),
+          hidden: useNeuronLayer(inputSize * outputSize, true),
+          output: useNeuronLayer(outputSize),
+        };
+
+        layers.input.connect(layers.hidden).connect(layers.output);
+
+        return {
+          layers,
+          predict(input) {
+            console.log("PREDICT", input);
+            layers.input.forward(input);
+            return layers.output.neurons.map((n) => n.value);
+          },
+          train(input, target) {
+            const output = this.predict(input);
+            // const errors = output.map((o, i) => target[i] - o);
+            let loss = 0;
+            for (let i = 0; i < 3; i++) {
+              loss += layers.output.adapt(target);
+            }
+          },
+          refresh() {
+            this.predict(layers.input.neurons.map((n) => n.value));
+          },
+        };
+      }
+
+      function useNeuronLayer(size, hidden) {
+        const neurons = times(size, (i) => useNeuron({ hidden }));
+        return {
+          neurons,
+          forward(inputArray) {
+            neurons.forEach((n, i) => n.receive(inputArray[i]));
+          },
+          connect(layer) {
+            neurons.forEach((m) => layer.neurons.forEach((n) => m.connect(n)));
+            return layer;
+          },
+          adapt(target) {
+            return sumBy(neurons, (n, i) => n.adapt(target[i]));
+          },
+        };
+      }
+
+      function times(n, fn) {
+        return new Array(n).fill(null).map((_, i) => fn(i));
+      }
+
+      function useNeuron({ hidden = false, bias = 0 } = {}) {
+        // let bias = (Math.random() * 2 - 1) * 0.1;
+        const id = `n${ctx.neuronIndex++}`;
+
+        let value = 0;
+        let synapsis_in = [];
+        let synapsis_out = [];
+        let values_in = [];
+
+        const self = {
+          id,
+          hidden,
+          get isInput() {
+            return synapsis_in.length === 0;
+          },
+          isNeuron: true,
+          synapsis_in,
+          synapsis_out,
+          get value() {
+            return value;
+          },
+          set value(v) {
+            value = v;
+            if (this.isInput) ctx.eventBus.emit("change");
+          },
+          get bias() {
+            return bias;
+          },
+          set bias(v) {
+            bias = v;
+            ctx.eventBus.emit("change");
+          },
+          connect(item) {
+            if (item.isNeuron)
+              synapsis_out.push(useSynapse({ from: self, to: item }));
+            if (item.isSynapse) synapsis_in.push(item);
+          },
+          receive(v) {
+            values_in.push(v);
+            if (values_in.length >= synapsis_in.length) {
+              this.activate();
+              values_in.length = 0;
+            }
+          },
+          activate() {
+            const sum = sumBy(values_in, (v) => v);
+            value = sum + bias;
+            if (!this.isInput) {
+              value = sigmoid(value);
+            }
+            synapsis_out.forEach((s) => s.forward(value));
+          },
+        };
+        return self;
+      }
+
+      function useSynapse({ from, to, weight = 20 }) {
+        const id = `${from.id}:${to.id}`;
+        let value = 0;
+        const self = {
+          id,
+          isSynapse: true,
+          get weight() {
+            return weight;
+          },
+          set weight(v) {
+            weight = v;
+            ctx.eventBus.emit("change");
+          },
+          get value() {
+            return value;
+          },
+          forward(v) {
+            value = v * weight;
+            to.receive(v * weight);
+          },
+        };
+        to.connect(self);
+        return self;
+      }
+
+      function useVisualSynapse(synapse, container) {
+        const element = document.createElement("div");
+        element.classList.add("synapse");
+        element.title = "Click to change this weight";
+        element.addEventListener("click", (e) => {
+          e.stopPropagation();
+          synapse.weight = Number(
+            prompt("Enter new weight", synapse.weight) ?? synapse.weight
+          );
+          render();
+        });
+
+        container.appendChild(element);
+        function render() {
+          element.classList.toggle("synapse--positive", synapse.weight >= 0);
+          element.classList.toggle("synapse--negative", synapse.weight < 0);
+          element.innerText = synapse.weight.toFixed(2);
+        }
+        return {
+          render,
+        };
+      }
+
+      function useVisualSynapses(neuron, container) {
+        const element = document.createElement("div");
+        element.classList.add("synapses");
+        const children = neuron.synapsis_out.map((s) =>
+          useVisualSynapse(s, element)
+        );
+        container.appendChild(element);
+        return {
+          render: () => children.forEach((s) => s.render()),
+        };
+      }
+
+      function useVisualInputValue(synapse, container) {
+        const element = document.createElement("div");
+        element.classList.add("input-value");
+        container.appendChild(element);
+        return {
+          render: () => (element.innerText = synapse.value.toFixed(2)),
+        };
+      }
+
+      function useVisualInputValues(neuron, container) {
+        const element = document.createElement("div");
+        element.classList.add("input-values");
+        const children = neuron.synapsis_in.map((s) =>
+          useVisualInputValue(s, element)
+        );
+        container.appendChild(element);
+        return {
+          render: () => children.forEach((s) => s.render()),
+        };
+      }
+
+      function useVisualNeuron(layer, index, container) {
+        const neuron = layer.neurons[index];
+        const element = document.createElement("div");
+        element.classList.add("neuron");
+        element.classList.toggle("neuron--hidden", neuron.hidden);
+        element.setAttribute("data-index", index);
+
+        const biasElement = document.createElement("span");
+        biasElement.classList.add("neuron__bias");
+        element.appendChild(biasElement);
+
+        const valueElement = document.createElement("span");
+        valueElement.classList.add("neuron__value");
+        element.appendChild(valueElement);
+
+        if (!neuron.isInput) {
+          biasElement.title = "Click to change bias";
+          biasElement.addEventListener("click", () => {
+            neuron.bias = Number(
+              prompt("Enter new bias", neuron.bias) ?? neuron.bias
+            );
+            render();
+          });
+        } else {
+          valueElement.title = "Click to toggle value";
+          valueElement.addEventListener("click", () => {
+            neuron.value = neuron.value === 0 ? 1 : 0;
+            render();
+          });
+        }
+
+        const synapses = useVisualSynapses(neuron, element);
+        const inputValues = useVisualInputValues(neuron, element);
+        container.appendChild(element);
+
+        function render() {
+          valueElement.innerText = neuron.value.toFixed(2);
+          biasElement.innerText =
+            (neuron.bias >= 0 ? "+" : "") + neuron.bias.toFixed(2);
+          synapses.render();
+          inputValues.render();
+        }
+
+        return {
+          render,
+        };
+      }
+
+      function useVisualLayer(layer, index, container) {
+        const element = document.createElement("div");
+        element.classList.add("layer");
+        element.classList.add("layer--" + index);
+        container.appendChild(element);
+
+        const headline = document.createElement("div");
+        headline.classList.add("layer__headline");
+        headline.innerText = index;
+        element.appendChild(headline);
+
+        const neurons = layer.neurons.map((l, i) =>
+          useVisualNeuron(layer, i, element)
+        );
+        return {
+          render: () => neurons.forEach((n, i) => neurons[i].render(n)),
+        };
+      }
+
+      function usePageTitle(title) {
+        const element = document.createElement("h1");
+        document.body.appendChild(element);
+
+        function set(title) {
+          element.innerText = title;
+          document.title = title;
+        }
+        if (title) set(title);
+        return { set };
+      }
+
+      function useNetworkVisializer(network) {
+        const container = document.createElement("div");
+        container.classList.add("container");
+        document.body.appendChild(container);
+
+        const { input, hidden, output } = network.layers;
+        const layers = [
+          useVisualLayer(input, "input", container),
+          useVisualLayer(hidden, "hidden", container),
+          useVisualLayer(output, "output", container),
+        ];
+
+        return {
+          render: () => {
+            layers.forEach((l) => l.render());
+          },
+        };
+      }
+
+      function useCustomStates() {
+        return {
+          XOR: {
+            n0: 0,
+            "n0:n2": 20,
+            "n0:n3": -20,
+            n1: 0,
+            "n1:n2": 20,
+            "n1:n3": -20,
+            n2: -10,
+            "n2:n4": 20,
+            n3: 30,
+            "n3:n4": 20,
+            n4: -30,
+          },
+        };
+      }
+
+      function useStateController(network) {
+        const states = useCustomStates();
+        return {
+          get() {
+            const data = {};
+            Object.values(nn.layers).forEach((layer) => {
+              layer.neurons.forEach((neuron) => {
+                data[neuron.id] = neuron.isInput ? neuron.value : neuron.bias;
+                neuron.synapsis_out.forEach((synapse) => {
+                  data[synapse.id] = synapse.weight;
+                });
+              });
+            });
+            return data;
+          },
+          set(data) {
+            ctx.eventBus.enabled = false;
+            Object.values(nn.layers).forEach((layer) => {
+              layer.neurons.forEach((neuron) => {
+                if (!(neuron.id in data)) return;
+                if (neuron.isInput) {
+                  neuron.value = data[neuron.id];
+                } else {
+                  neuron.bias = data[neuron.id];
+                }
+                neuron.synapsis_out.forEach((synapse) => {
+                  synapse.weight = data[synapse.id];
+                });
+              });
+            });
+            ctx.eventBus.enabled = true;
+          },
+          save(name) {
+            const data = this.get();
+            console.log("SAVE", data);
+            localStorage[name] = JSON.stringify(data, null, 3);
+          },
+          load(name, fallback) {
+            let state = states[name] || states[fallback];
+            if (name in localStorage) {
+              state = JSON.parse(localStorage[name]);
+            } else {
+              console.log("Load fallback state: " + fallback, state);
+            }
+            this.set(state);
+          },
+        };
+      }
+
+      function sigmoid(x) {
+        return 1 / (1 + Math.exp(-x));
+      }
+
+      function avg(...args) {
+        return args.reduce((a, b) => a + b, 0) / args.length;
+      }
+
+      function sumBy(arr, fn) {
+        let index = 0;
+        return arr.reduce((a, b) => a + fn(b, index++), 0);
+      }
+
+      function useEventBus() {
+        const listeners = {};
+        return {
+          enabled: true,
+          on(event, fn) {
+            listeners[event] = listeners[event] || [];
+            listeners[event].push(fn);
+          },
+          emit(event, ...args) {
+            if (!this.enabled) return;
+            (listeners[event] || []).forEach((fn) => fn(...args));
+          },
+        };
+      }
+    </script>
+
+    <style>
+      html {
+        font-size: 20px;
+      }
+
+      @media screen and (max-width: 800px) {
+        html {
+          font-size: 16px;
+        }
+      }
+
+      body {
+        background-color: black;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        margin: 0;
+        padding: 0;
+        height: 100vh;
+      }
+
+      h1 {
+        width: 100%;
+        text-align: center;
+        color: white;
+        font-family: monospace;
+        font-size: 150%;
+      }
+
+      * {
+        cursor: default;
+      }
+
+      .container {
+        display: flex;
+        gap: 2rem;
+        margin: 2rem;
+      }
+
+      .layer {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .layer__headline {
+        text-transform: uppercase;
+        color: white;
+        font-size: 90%;
+        margin-bottom: 10px;
+        font-family: monospace;
+      }
+
+      .layer--input .neuron__bias {
+        display: none;
+      }
+
+      .neuron {
+        position: relative;
+        color: white;
+        width: 3.5rem;
+        height: 3rem;
+        border: 1px solid yellow;
+        border-radius: 5px;
+        margin: 0.5rem 3rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        font-family: monospace;
+        gap: 0.2rem;
+      }
+
+      .neuron--hidden {
+        border-color: rgba(255, 255, 255, 0.436);
+      }
+
+      .neuron__bias {
+        font-size: 75%;
+        color: rgb(75, 168, 254);
+        cursor: pointer;
+      }
+
+      .layer--input .neuron__value {
+        cursor: pointer;
+      }
+
+      .synapses {
+        position: absolute;
+        left: 100%;
+        top: 50%;
+        bottom: 0;
+        font-size: 70%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: end;
+        font-family: monospace;
+        color: white;
+      }
+
+      .synapse {
+        padding: 2px 5px;
+        cursor: pointer;
+      }
+
+      .synapse--positive {
+        color: rgb(0, 200, 0);
+      }
+      .synapse--negative {
+        color: rgb(255, 43, 43);
+      }
+
+      .input-values {
+        position: absolute;
+        right: 100%;
+        top: 50%;
+        bottom: 0;
+        font-size: 75%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        font-family: monospace;
+        color: grey;
+        padding: 5px;
+        text-align: right;
+      }
+
+      .layer--input .neuron__value:hover,
+      .neuron__bias:hover,
+      .synapse:hover {
+        background-color: yellow;
+        color: black;
+      }
+
+      .copyright {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        text-align: center;
+        font-size: 50%;
+        color: rgb(135, 135, 135);
+        font-family: monospace;
+      }
+
+      .copyright a {
+        color: inherit;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+    </style>
+  </body>
+</html>
