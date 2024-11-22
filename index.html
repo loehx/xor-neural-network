@@ -166,8 +166,18 @@
         return self;
       }
 
+      function useHighlightOnHover(element, id) {
+        element.addEventListener("mouseenter", () => {
+          document.getElementById(id).classList.add("highlight");
+        });
+        element.addEventListener("mouseleave", () => {
+          document.getElementById(id).classList.remove("highlight");
+        });
+      }
+
       function useVisualSynapse(synapse, container) {
         const element = document.createElement("div");
+        element.id = `out-${synapse.id}`;
         element.classList.add("synapse");
         element.title = "Click to change this weight";
         element.addEventListener("click", (e) => {
@@ -177,6 +187,8 @@
           );
           render();
         });
+
+        useHighlightOnHover(element, `in-${synapse.id}`);
 
         container.appendChild(element);
         function render() {
@@ -204,7 +216,9 @@
       function useVisualInputValue(synapse, container) {
         const element = document.createElement("div");
         element.classList.add("input-value");
+        element.id = `in-${synapse.id}`;
         container.appendChild(element);
+        useHighlightOnHover(element, `out-${synapse.id}`);
         return {
           render: () => (element.innerText = synapse.value.toFixed(2)),
         };
@@ -551,7 +565,8 @@
 
       .layer--input .neuron__value:hover,
       .neuron__bias:hover,
-      .synapse:hover {
+      .synapse:hover,
+      .highlight {
         background-color: yellow;
         color: black;
       }
